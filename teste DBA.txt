@@ -1,0 +1,172 @@
+1.
+-- Adicionar a chave estrangeira na tabela institution (tenant_id)
+ALTER TABLE institution
+ADD CONSTRAINT fk_institution_tenant FOREIGN KEY (tenant_id)
+REFERENCES tenant(id) ;
+
+-- Adicionar a chave estrangeira na tabela course (tenant_id)
+ALTER TABLE course
+ADD CONSTRAINT fk_course_tenant FOREIGN KEY (tenant_id)
+REFERENCES tenant(id) ;
+
+-- Adicionar a chave estrangeira na tabela course (institution_id)
+ALTER TABLE course
+ADD CONSTRAINT fk_course_institution FOREIGN KEY (institution_id)
+REFERENCES institution(id) ;
+
+-- Adicionar a chave estrangeira na tabela enrollment (tenant_id)
+ALTER TABLE enrollment
+ADD CONSTRAINT fk_enrollment_tenant FOREIGN KEY (tenant_id)
+REFERENCES tenant(id) ;
+
+-- Adicionar a chave estrangeira na tabela enrollment (institution_id)
+ALTER TABLE enrollment
+ADD CONSTRAINT fk_enrollment_institution FOREIGN KEY (institution_id)
+REFERENCES institution(id);
+
+-- Adicionar a chave estrangeira na tabela enrollment (person_id)
+ALTER TABLE enrollment
+ADD CONSTRAINT fk_enrollment_person FOREIGN KEY (person_id)
+REFERENCES person(id) ;
+
+
+
+2.
+
+CREATE INDEX idx_tenant_name ON tenant (name);
+CREATE INDEX idx_person_metadata ON person USING GIN (metadata);
+CREATE INDEX idx_institution_name ON institution (name);
+CREATE INDEX idx_course_name ON course (name);
+CREATE INDEX idx_course_detail ON course USING GIN (detail);
+CREATE INDEX idx_course_tenant_institution ON course (tenant_id, institution_id);
+CREATE INDEX idx_enrollment_status ON enrollment (status);
+CREATE INDEX idx_enrollment_tenant_institution_person ON enrollment (tenant_id, institution_id, person_id);
+
+
+
+3. Você pode obter adicionando uma constraint unique que vai garantir que essa combinação dos 3 campos só ocorra uma vez
+
+-- Adicionar a constraint UNIQUE para garantir matrícula única por pessoa, instituição e inquilino
+ALTER TABLE enrollment
+ADD CONSTRAINT unique_enrollment UNIQUE (tenant_id, institution_id, person_id);
+
+
+4. Você poderia colocar nas fks on delete cascade isso ia garantir quando um registro na tabela mãe for excluído vai acontecer a exclusão nas filhas relacionadas a chave da mãe.
+	
+	
+-- Remover a chave estrangeira existente
+ALTER TABLE institution
+DROP CONSTRAINT IF EXISTS fk_institution_tenant;
+
+-- Adicionar a chave estrangeira com ON DELETE CASCADE
+ALTER TABLE institution
+ADD CONSTRAINT fk_institution_tenant FOREIGN KEY (tenant_id)
+REFERENCES tenant(id) ON DELETE CASCADE;
+
+
+-- Remover a chave estrangeira existente para tenant_id
+ALTER TABLE course
+DROP CONSTRAINT IF EXISTS fk_course_tenant;
+
+-- Adicionar a chave estrangeira com ON DELETE CASCADE para tenant_id
+ALTER TABLE course
+ADD CONSTRAINT fk_course_tenant FOREIGN KEY (tenant_id)
+REFERENCES tenant(id) ON DELETE CASCADE;
+
+-- Remover a chave estrangeira existente para institution_id
+ALTER TABLE course
+DROP CONSTRAINT IF EXISTS fk_course_institution;
+
+-- Adicionar a chave estrangeira com ON DELETE CASCADE para institution_id
+ALTER TABLE course
+ADD CONSTRAINT fk_course_institution FOREIGN KEY (institution_id)
+REFERENCES institution(id) ON DELETE CASCADE;
+
+
+
+-- Remover a chave estrangeira existente para tenant_id
+ALTER TABLE enrollment
+DROP CONSTRAINT IF EXISTS fk_enrollment_tenant;
+
+-- Adicionar a chave estrangeira com ON DELETE CASCADE para tenant_id
+ALTER TABLE enrollment
+ADD CONSTRAINT fk_enrollment_tenant FOREIGN KEY (tenant_id)
+REFERENCES tenant(id) ON DELETE CASCADE;
+
+-- Remover a chave estrangeira existente para institution_id
+ALTER TABLE enrollment
+DROP CONSTRAINT IF EXISTS fk_enrollment_institution;
+
+-- Adicionar a chave estrangeira com ON DELETE CASCADE para institution_id
+ALTER TABLE enrollment
+ADD CONSTRAINT fk_enrollment_institution FOREIGN KEY (institution_id)
+REFERENCES institution(id) ON DELETE CASCADE;
+
+-- Remover a chave estrangeira existente para person_id
+ALTER TABLE enrollment
+DROP CONSTRAINT IF EXISTS fk_enrollment_person;
+
+-- Adicionar a chave estrangeira com ON DELETE CASCADE para person_id
+ALTER TABLE enrollment
+ADD CONSTRAINT fk_enrollment_person FOREIGN KEY (person_id)
+REFERENCES person(id) ON DELETE CASCADE;
+
+
+5.
+
+SELECT c.name AS course_name, COUNT(e.id) AS enrollment_count
+FROM course c
+JOIN enrollment e ON c.id = e.course_id
+JOIN person p ON e.person_id = p.id
+WHERE c.institution_id = 123  
+AND e.status = 'active'  -- Filtrando por status
+AND p.metadata @> '{"key": "value"}'::jsonb  
+GROUP BY c.id;
+
+6.
+
+
+SELECT p.id, p.name
+FROM enrollment e
+INNER JOIN person p ON e.person_id = p.id
+WHERE e.course_id = 456 
+AND e.institution_id = 123 
+AND e.tenant_id = 789  
+ORDER BY e.enrollment_date DESC
+
+
+7. O particionamento pode ser útil para otimizar consultas em tabelas com grande volume de dados.
+
+CREATE TABLE IF NOT EXISTS enrollment (
+    id SERIAL PRIMARY KEY,
+    tenant_id INTEGER,
+    institution_id INTEGER,
+    person_id INTEGER,
+    enrollment_date DATE,
+    status VARCHAR(20)
+) PARTITION BY HASH (id);
+
+-- Criação das partições
+CREATE TABLE IF NOT EXISTS enrollment_tenant_01 PARTITION OF enrollment FOR VALUES WITH (modulus 10, remainder 0);
+CREATE TABLE IF NOT EXISTS enrollment_tenant_02 PARTITION OF enrollment FOR VALUES WITH (modulus 10, remainder 1);
+CREATE TABLE IF NOT EXISTS enrollment_tenant_03 PARTITION OF enrollment FOR VALUES WITH (modulus 10, remainder 2);
+CREATE TABLE IF NOT EXISTS enrollment_tenant_04 PARTITION OF enrollment FOR VALUES WITH (modulus 10, remainder 3);
+CREATE TABLE IF NOT EXISTS enrollment_tenant_05 PARTITION OF enrollment FOR VALUES WITH (modulus 10, remainder 4);
+CREATE TABLE IF NOT EXISTS enrollment_tenant_06 PARTITION OF enrollment FOR VALUES WITH (modulus 10, remainder 5);
+CREATE TABLE IF NOT EXISTS enrollment_tenant_07 PARTITION OF enrollment FOR VALUES WITH (modulus 10, remainder 6);
+CREATE TABLE IF NOT EXISTS enrollment_tenant_08 PARTITION OF enrollment FOR VALUES WITH (modulus 10, remainder 7);
+CREATE TABLE IF NOT EXISTS enrollment_tenant_09 PARTITION OF enrollment FOR VALUES WITH (modulus 10, remainder 8);
+CREATE TABLE IF NOT EXISTS enrollment_tenant_10 PARTITION OF enrollment FOR VALUES WITH (modulus 10, remainder 9);
+
+
+Foi particionado a tabela em 4 e tudo vai ser calculado pelo hash do id.
+
+
+8.
+
+- Revisar os índices dos campos JSONB vê se são GIN. O índice GIN é otimizado para tipos de dados como arrays, listas de palavras ou dados com múltiplos valores, como JSONB.
+- O particionamento é uma boa melhoria, mas só se tem resultado esperado em tabelas realmente grandes.
+
+9.
+As alterações podem ser aplicadas direto na console do BD ou usando ferramentas tipo o flyway. Lembrando que nos alter table irá ter ocorrência de locks. E o mais importantes testar as modificações primeiros
+em BD não produtivos
